@@ -4,38 +4,127 @@ A reusable **Docker Compose + nginx + Cloudflare** deployment template for Proan
 
 **Why this template?** Many of our apps (Next.js, Express, static sites, API backends) don't need Kubernetes or complex orchestration — they just need a solid, repeatable Docker deployment behind an nginx reverse proxy. This template captures what we've learned from PristinePro, ESL Dispatch Board, and other production deployments.
 
-## What's Included
+## How to Use This Template
 
-| File | Purpose |
-|---|---|
-| `Dockerfile` | Multi-stage build template (customize for your app) |
-| `docker-compose.yml` | Local dev compose (app + optional services) |
-| `docker-compose.prod.yml` | Production compose (app + nginx proxy + optional DB) |
-| `nginx.conf` | Cloudflare-aware nginx config (real-IP, rate limiting, Gzip, security headers) |
-| `nginx-prod-proxy.conf` | Production nginx virtual host (SSL, proxy pass, rate limits) |
-| `Makefile` | Standard targets: `prod-up`, `prod-down`, `prod-smoke`, `local-up`, etc. |
-| `.github/workflows/deploy.yml` | GitHub Actions CI/CD for self-hosted runners (staging + prod) |
-| `deploy-production.sh` | Manual deploy script (health checks + rollback awareness) |
-| `domain-setup-guide.md` | Cloudflare + Origin Certificate + SSL setup |
-| `.env.example` | All environment variables documented |
+### Option A: Use as a GitHub Template (recommended)
 
-## Quick Start
+The repo is configured as a [GitHub template repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+
+1. Go to https://github.com/proanalytica-au/proanalytica-vm-deploy-template
+2. Click the green **"Use this template"** button → **"Create a new repository"**
+3. Set **Owner** to `proanalytica-au`
+4. Name your repo (e.g. `my-new-app`)
+5. Click **Create repository**
 
 ```bash
-# Clone this template into your project
-# Copy and customize for your app
+# Clone your new repo
+git clone https://github.com/proanalytica-au/my-new-app.git
+cd my-new-app
+```
 
-# 1. Set up environment
+### Option B: Clone and Push to a New Repo
+
+```bash
+# Clone the template
+git clone https://github.com/proanalytica-au/proanalytica-vm-deploy-template.git my-new-app
+cd my-new-app
+
+# Create a new empty repo in the proanalytica-au org
+gh repo create proanalytica-au/my-new-app --public --description "Short description"
+
+# Push the template to the new repo
+git remote set-url origin https://github.com/proanalytica-au/my-new-app.git
+git push -u origin main
+```
+
+### Option C: Copy Files into an Existing Project
+
+```bash
+# Clone template to a temp location
+git clone --depth=1 https://github.com/proanalytica-au/proanalytica-vm-deploy-template.git /tmp/deploy-tmp
+
+# Copy the deployment files into your existing project
+cp -r /tmp/deploy-tmp/.github /tmp/deploy-tmp/Dockerfile \
+  /tmp/deploy-tmp/Makefile /tmp/deploy-tmp/docker-compose*.yml \
+  /tmp/deploy-tmp/nginx* /tmp/deploy-tmp/deploy-production.sh \
+  /tmp/deploy-tmp/domain-setup-guide.md /tmp/deploy-tmp/.env.example \
+  /tmp/deploy-tmp/.gitignore \
+  /path/to/your/project/
+```
+
+## Setup Checklist
+
+### 1. Replace `{{APP_NAME}}` placeholders
+
+The `docker-compose.yml` and `docker-compose.prod.yml` files contain `{{APP_NAME}}` placeholders used for container names and volume names. Replace them globally:
+
+```bash
+# In each file, replace {{APP_NAME}} with your app's name (lowercase, hyphens)
+# e.g. sed -i 's/{{APP_NAME}}/my-new-app/g' docker-compose.yml docker-compose.prod.yml
+```
+
+### 2. Customize the Dockerfile
+
+Edit `Dockerfile` for your specific app framework:
+
+| App type | Build tool | Runtime | CMD |
+|---|---|---|---|
+| Next.js | `next build` (with `output: "standalone"`) | `node:20-alpine` | `node server.js` |
+| Express / Node API | `esbuild` or `tsc` | `node:20-alpine` | `node dist/index.js` |
+| Vite / CRA SPA | `vite build` | `nginx:alpine` (static serve) | nginx |
+| Go API | `go build` | `scratch` or `gcr.io/distroless/base` | binary |
+| Python / FastAPI | `pip` | `python:3.12-slim` | `uvicorn` |
+
+See the comments in `Dockerfile` for framework-specific alternatives.
+
+### 3. Set up environment
+
+```bash
 cp .env.example .env.prod
+# Edit .env.prod with your actual values
+```
 
-# 2. Place Cloudflare Origin Certificate in ./certs/
-#    (see domain-setup-guide.md)
+### 4. Add Cloudflare Origin Certificate
 
-# 3. Deploy
+```bash
+mkdir -p certs
+# Place certificate and key in ./certs/
+# See domain-setup-guide.md for Cloudflare instructions
+```
+
+### 5. Configure GitHub Secrets and Variables
+
+In your repo **Settings → Secrets and variables → Actions**:
+
+| Type | Key | Description |
+|---|---|---|
+| Secret | `SERVICEM8_API_KEY` | App-specific API keys |
+| Secret | `SENDGRID_API_KEY` | Email service keys |
+| Variable | `PROXY_HTTPS_PORT` | Default: `443` |
+| Variable | `SSL_CERT_PATH` | Default: `./certs/origin.crt` |
+| Variable | `SSL_KEY_PATH` | Default: `./certs/origin.key` |
+
+Then update `.github/workflows/deploy.yml` with your app's secret/variable names.
+
+### 6. Set up the VM
+
+Requirements on the target VM:
+- Docker Engine + Docker Compose plugin
+- GitHub self-hosted runner registered with labels `[self-hosted, prod]` (or `[self-hosted, dev]` for staging)
+- Cloudflare Origin Certificate at `./certs/origin.crt` and `./certs/origin.key`
+- Update `deploy.yml` `working-directory` path to match where the runner stores the repo
+
+### 7. Deploy
+
+```bash
+# Build and start
 make prod-up
 
-# 4. Verify
+# Verify everything is running
 make prod-smoke
+
+# Check logs
+make prod-logs
 ```
 
 ## Architecture
@@ -45,6 +134,7 @@ Internet → Cloudflare (CDN/WAF/SSL) → VM port 443
                                          │
                                     nginx (reverse proxy)
                                       ├── /api/* → app:3000
+                                      ├── /ws/*  → app:3000 (WebSocket)
                                       └── /*      → app:3000
 ```
 
@@ -57,22 +147,25 @@ Internet → Cloudflare (CDN/WAF/SSL) → VM port 443
 
 Two environments via GitHub Actions:
 
-| Branch | Environment | Runner | Config |
-|---|---|---|---|
-| `staging` | dev | `self-hosted, dev` | `docker-compose.yml` (no SSL) |
-| `main` | prod | `self-hosted, prod` | `docker-compose.prod.yml` (SSL) |
+| Branch | Environment | Runner | Compose file | SSL |
+|---|---|---|---|---|
+| `staging` | dev | `self-hosted, dev` | `docker-compose.yml` | No |
+| `main` | prod | `self-hosted, prod` | `docker-compose.prod.yml` | Yes |
 
-Set up secrets/vars in your GitHub repo settings matching the `.env.example` keys.
+## What's Included
 
-## Customization Checklist
-
-1. **Dockerfile**: Adjust build steps for your framework (Next.js, Express, Vite, etc.)
-2. **docker-compose.yml**: Add/remove services (Postgres, Redis, etc.)
-3. **docker-compose.prod.yml**: Update container names, ports, resource limits
-4. **nginx-prod-proxy.conf**: Adjust proxy pass ports, rate limit zones
-5. **Makefile**: Update `PORT` default, add custom targets
-6. **deploy.yml**: Update working-directory path for self-hosted runner
-7. **Domain**: Update `domain-setup-guide.md` with your actual hostname
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Multi-stage build template (customize for your app) |
+| `docker-compose.yml` | Local dev compose (app + optional services) |
+| `docker-compose.prod.yml` | Production compose (app + nginx proxy + optional DB) |
+| `nginx.conf` | Cloudflare-aware nginx config (real-IP, rate limiting, Gzip, security headers) |
+| `nginx-prod-proxy.conf` | Production nginx virtual host (SSL, proxy pass, rate limits, WebSocket) |
+| `Makefile` | Standard targets: `prod-up`, `prod-down`, `prod-smoke`, `local-up`, etc. |
+| `.github/workflows/deploy.yml` | GitHub Actions CI/CD for self-hosted runners (staging + prod) |
+| `deploy-production.sh` | Manual deploy script with health check loop |
+| `domain-setup-guide.md` | Cloudflare + Origin Certificate + SSL setup |
+| `.env.example` | All environment variables documented |
 
 ## Directory Structure
 
@@ -82,7 +175,7 @@ project/
 ├── docker-compose.yml          # Local dev
 ├── docker-compose.prod.yml     # Production
 ├── nginx.conf                  # Base nginx config (Cloudflare, rate limits, gzip)
-├── nginx-prod-proxy.conf       # Prod virtual host (SSL, proxy rules)
+├── nginx-prod-proxy.conf       # Prod virtual host (SSL, proxy rules, WebSocket)
 ├── Makefile                    # Make targets
 ├── deploy-production.sh        # Manual deploy script
 ├── domain-setup-guide.md       # Cloudflare/SSL guide
@@ -93,3 +186,12 @@ project/
 │   └── origin.key              # (git-ignored) Cloudflare Origin Key
 └── .github/workflows/deploy.yml
 ```
+
+## Pitfalls
+
+- **`{{APP_NAME}}` placeholders**: Search and replace these in `docker-compose.yml` and `docker-compose.prod.yml` before first use.
+- **Next.js requires `output: "standalone"`**: Add `output: "standalone"` to `next.config.ts` or the Docker build won't have bundled dependencies.
+- **Self-hosted runner path**: The `deploy.yml` uses `working-directory` referencing `/home/deploy/{{APP_NAME}}` — change this to the actual checkout path on your VM.
+- **Cloudflare proxy**: If the orange cloud is off, traffic bypasses Cloudflare SSL and hits nginx directly. nginx expects SSL on 443 and will refuse the connection.
+- **Rate limits**: Default nginx `limit_req` is 120 req/min per IP on `/api/`. Adjust for your app's traffic patterns.
+- **First deploy**: The app container must expose a `/health` endpoint or the nginx healthcheck will fail. If your app uses a different healthcheck path, update both the `Dockerfile` HEALTHCHECK and `nginx-prod-proxy.conf`.

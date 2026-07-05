@@ -1,3 +1,9 @@
+# ── CUSTOMIZE THIS WORKFLOW ──────────────────────────
+# 1) Search for {{APP_NAME}} and replace with your app name
+# 2) Update the paths: block to match your source directories
+# 3) Add your app's secrets/vars in the env: block below
+# 4) Set the working-directory to your self-hosted runner's clone path
+# ─────────────────────────────────────────────────────
 name: Deploy
 
 on:
@@ -7,6 +13,8 @@ on:
       - staging
     paths:
       - src/**
+      - server/**
+      - client/**
       - Dockerfile
       - docker-compose.yml
       - docker-compose.prod.yml
