@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+    paths:
+      - src/**
+      - Dockerfile
+      - docker-compose.yml
+      - docker-compose.prod.yml
+      - nginx.conf
+      - nginx-prod-proxy.conf
+      - Makefile
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+jobs:
+  deploy-staging:
+    if: github.ref_name == 'staging'
+    runs-on: [self-hosted, dev]
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and deploy
+        working-directory: /home/deploy/{{APP_NAME}}
+        run: |
+          set -euo pipefail
+          git fetch origin staging
+          git reset --hard origin/staging
+          docker compose -f docker-compose.yml build --pull app
+          docker compose -f docker-compose.yml up -d --remove-orphans
+          sleep 5
+
+      - name: Verify deployment
+        run: |
+          set -euo pipefail
+          curl -f "http://localhost:3000/" >/dev/null
+          curl -f "http://localhost:3000/health" >/dev/null
+          docker compose -f docker-compose.yml ps
+          docker compose -f docker-compose.yml logs --tail=120 app
+
+  deploy-prod:
+    if: github.ref_name == 'main'
+    runs-on: [self-hosted, prod]
+    environment: prod
+    env:
+      PROXY_HTTPS_PORT: ${{ vars.PROXY_HTTPS_PORT || '443' }}
+      SSL_CERT_PATH: ${{ vars.SSL_CERT_PATH || './certs/origin.crt' }}
+      SSL_KEY_PATH: ${{ vars.SSL_KEY_PATH || './certs/origin.key' }}
+      # ── Add your app-specific secrets here ──
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate TLS files
+        run: |
+          set -euo pipefail
+          if [ ! -f "${SSL_CERT_PATH:-./certs/origin.crt}" ]; then
+            echo "Missing TLS certificate at ${SSL_CERT_PATH:-./certs/origin.crt}"
+            exit 1
+          fi
+          if [ ! -f "${SSL_KEY_PATH:-./certs/origin.key}" ]; then
+            echo "Missing TLS key at ${SSL_KEY_PATH:-./certs/origin.key}"
+            exit 1
+          fi
+
+      - name: Build and deploy
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.prod.yml build --pull app
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          sleep 8
+
+      - name: Verify deployment
+        run: |
+          set -euo pipefail
+          curl -kf "https://localhost/" >/dev/null
+          curl -kf "https://localhost/health" >/dev/null
+          docker compose -f docker-compose.prod.yml ps
+          docker compose -f docker-compose.prod.yml logs --tail=120 app
+          docker compose -f docker-compose.prod.yml logs --tail=120 proxy

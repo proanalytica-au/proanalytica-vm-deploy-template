@@ -1,0 +1,47 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# build output
+/.next/
+/out/
+/build
+/dist
+
+# misc
+.DS_Store
+
+# env files (template .env.example is committed)
+.env*
+!.env.example
+
+# deployment artifacts
+/certs/
+*.pem
+*.crt
+*.key
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
